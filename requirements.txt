@@ -1,0 +1,7 @@
+numpy>=1.26.0
+scipy>=1.13.0
+soundfile>=0.12.1
+sounddevice>=0.4.6
+pydub>=0.25.1
+pyrubberband>=0.3.0
+PySide6>=6.7.0
