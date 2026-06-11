@@ -1,6 +1,6 @@
 # Wavebreach
 
-Wavebreach is a dumb little utility for splitting an audio file into single-cycle waveforms to make a wavetable that I started to try to make weird stuff to load into LXR02. 
+Wavebreach is a dumb little utility for splitting an audio file into single-cycle waveforms to make a wavetable or bolognese or whatever. 
 Maybe it will sound cool and be useful. Maybe it won't. Who knows!?!?
 
 ---
@@ -129,5 +129,5 @@ Each file is a single-cycle waveform at 44.1 kHz / 16-bit mono PCM.
 
 ## Project Structure
 
-See `CLAUDE.md` for the full directory layout and architecture notes.
+See `MEMORY.md` for the full directory layout and architecture notes.
 See `PLANNING.md` for the full design and implementation plan.
