@@ -238,11 +238,25 @@ Order of operations per waveform, applied after slicing:
 - `ui/main_window.py`: full layout, file open, background load thread, raw play
 - `wavebreach.py`: QApplication, stylesheet, command-line file arg
 
-### Phase 2 — ZC detection, splitter, live waveform overlays [IN PROGRESS]
+### Phase 2 — ZC detection, splitter, live waveform overlays [DONE]
 - `core/zero_crossing.py`: interpolated detection, min/max exclusion zones
 - `core/splitter.py`: WaveRegion selection, deduplication
 - Wire param changes to Tier-1 update (ZC + splitter on main thread)
 - Waveform view: draw split lines, blue/green/magenta overlays live
+
+### Phase 2b — Interactive controls [DONE]
+- `ui/waveform_view.py`: Zoom slider (1x-50x log) + Position slider below canvas
+- `ui/waveform_view.py`: Draggable Start (orange) and End (cyan) markers on canvas
+  - Hit zone 8px, cursor feedback, emits `start_changed(int)` / `end_changed(int)`
+- `ui/spectrum_view.py`: Draggable cutoff handle (amber line + diamond)
+  - Left/right drag: cutoff frequency (log-scale, full range = full widget width)
+  - Up/down drag: Q (150 px/decade, slow response)
+  - Emits `cutoff_changed(float)` / `q_changed(float)`
+- `ui/param_panel.py`: Log-scale QSliders for Cutoff (20-22000 Hz) and Q (0.1-10)
+- `ui/param_panel.py`: Integer QSliders for Start and End (range set on file load)
+- All controls bidirectionally wired via blockSignals guards (no feedback loops)
+- `MainWindow` routes: canvas drag -> param panel; spectrum drag -> param panel;
+  param changes -> spectrum display sync; param changes -> waveform marker sync
 
 ### Phase 3 — Full DSP pipeline [TODO]
 - `core/modifier.py`: Offset, Stretch, Suppress per-waveform transforms

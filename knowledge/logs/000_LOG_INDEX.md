@@ -28,3 +28,18 @@ Cross-references point to relevant sections of PLANNING.md and CLAUDE.md.
 | DSP pipeline order | PLANNING.md §7 | Session 003 (Phase 3) |
 | Filter SVF biquad formulation | PLANNING.md §9 | Session 003 (Phase 3) |
 | pyrubberband stretch wrapper | PLANNING.md §9 | Session 003 (Phase 3) |
+| [003](003_SESSION_LOG.md) | 2026-06-10 | Phase 2b | Draggable UI elements: waveform zoom/position sliders, draggable Start/End markers on waveform canvas, draggable cutoff (L/R) and Q (U/D) on spectrum canvas, log-scale sliders for cutoff and Q in param panel, all controls bidirectionally wired |
+
+---
+
+## Knowledge Cross-Reference (additions from Session 003)
+
+| Topic | Where defined | First used |
+|---|---|---|
+| Waveform zoom/pos slider log scale | `ui/waveform_view.py` `_slider_to_zoom` / `_zoom_to_slider` | Session 003 |
+| Start/End marker drag on canvas | `ui/waveform_view.py` `_WaveCanvas` mouse events | Session 003 |
+| Spectrum cutoff drag (L/R log-freq) | `ui/spectrum_view.py` `mouseMoveEvent` | Session 003 |
+| Spectrum Q drag (U/D log-scale, 150px/decade) | `ui/spectrum_view.py` `mouseMoveEvent` | Session 003 |
+| Cutoff/Q log-scale sliders | `ui/param_panel.py` `_cutoff_to_slider` etc. | Session 003 |
+| Bidirectional spin↔slider wiring (blockSignals) | `ui/param_panel.py` `_on_*_changed` handlers | Session 003 |
+| spec_view.set_filter_params() sync | `ui/main_window.py` `_on_params_changed` | Session 003 |
