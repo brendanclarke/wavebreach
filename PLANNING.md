@@ -258,17 +258,17 @@ Order of operations per waveform, applied after slicing:
 - `MainWindow` routes: canvas drag -> param panel; spectrum drag -> param panel;
   param changes -> spectrum display sync; param changes -> waveform marker sync
 
-### Phase 3 — Full DSP pipeline [TODO]
+### Phase 3 -- Full DSP pipeline [DONE]
+- `core/filter_dsp.py`: SVF biquad design (LP/HP/BP), sosfilt, compute_response
+- `core/stretcher.py`: pyrubberband wrapper with scipy fallback
 - `core/modifier.py`: Offset, Stretch, Suppress per-waveform transforms
-- `core/filter_dsp.py`: SVF biquad design (LP/HP/BP), sosfilt application
-- `core/stretcher.py`: pyrubberband wrapper for time-stretch
-- `ui/main_window.py`: Go button → QThread worker → progress dialog
-- Original-file preview playback with filter applied
-- Filter response computed for spectrum overlay
+- `core/processor.py`: ProcessWorker -- full pipeline orchestrator
+- `ui/main_window.py`: Go -> QThread + QProgressDialog; filtered preview playback
+- `ui/param_panel.py`: Start/End sliders repositioned directly under spinboxes
 
-### Phase 4 — Spectrum filter overlay [TODO]
-- `ui/spectrum_view.py`: draw filter response as semi-transparent overlay
-- `core/filter_dsp.py`: `compute_response(freqs)` for display
+### Phase 4 -- Spectrum filter overlay [DONE]
+- `ui/spectrum_view.py`: filter response drawn as filled blue overlay + curve
+- Response updated live on every filter param change via MainWindow._sync_filter_display()
 
 ### Phase 5 — Processed playback, navigation, export [TODO]
 - `core/exporter.py`: ZIP assembly, numbered WAV naming

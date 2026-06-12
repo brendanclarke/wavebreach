@@ -258,10 +258,58 @@ class SpectrumView(QWidget):
         p.drawPath(path)
 
     def _draw_filter_overlay(self, p: QPainter, w: int, h: int) -> None:
-        """Phase 3: filter response overlay. Stub."""
+        """Draw filter frequency response as a semi-transparent blue overlay."""
         if self._filter_resp_freqs is None or self._filter_resp_db is None:
             return
-        # TODO Phase 3
+
+        freqs = self._filter_resp_freqs
+        db    = self._filter_resp_db
+
+        # Build a filled path: top edge = filter response curve,
+        # bottom = 0 dB line (top of widget), so we fill the pass-band area.
+        # We draw above the 0-dB reference line for the pass-band,
+        # and clip everything that dips below -3 dB as the stop-band.
+        # Simpler: fill between response and bottom, so pass = tall fill, stop = short fill.
+        path = QPainterPath()
+        started = False
+        last_x = 0.0
+        for freq, d in zip(freqs, db):
+            if freq < FREQ_MIN:
+                continue
+            x = _freq_to_x(freq, w)
+            y = _db_to_y(d, h)
+            y = max(0.0, min(float(h), y))
+            if not started:
+                path.moveTo(x, h)
+                path.lineTo(x, y)
+                started = True
+            else:
+                path.lineTo(x, y)
+            last_x = x
+
+        if not started:
+            return
+
+        path.lineTo(last_x, h)
+        path.closeSubpath()
+
+        p.fillPath(path, FILTER_OVERLAY)
+
+        # Draw the response curve line on top
+        p.setPen(QPen(QColor(0x80, 0xC0, 0xFF, 180), 1))
+        path2 = QPainterPath()
+        started = False
+        for freq, d in zip(freqs, db):
+            if freq < FREQ_MIN:
+                continue
+            x = _freq_to_x(freq, w)
+            y = _db_to_y(d, h)
+            if not started:
+                path2.moveTo(x, y)
+                started = True
+            else:
+                path2.lineTo(x, y)
+        p.drawPath(path2)
 
     def _draw_cutoff_marker(self, p: QPainter, w: int, h: int) -> None:
         """Draw the amber cutoff line + label with Q value."""

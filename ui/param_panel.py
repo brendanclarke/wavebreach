@@ -211,50 +211,58 @@ class ParamPanel(QWidget):
         grp  = QGroupBox("SLICE")
         vbox = QVBoxLayout(grp)
         vbox.setSpacing(4)
-        grid = QGridLayout()
-        grid.setSpacing(4)
-        grid.setColumnStretch(1, 1)
 
+        # ---- Start row + slider ----
         self._start_spin = self._make_int_spin(0, 0, 441000,
                                                "Samples from front to skip")
-        self._end_spin   = self._make_int_spin(0, 0, 441000,
-                                               "Samples from end to skip")
-        self._num_spin   = self._make_int_spin(16, 1, 9999,
-                                               "Number of waveforms to extract")
-        self._min_spin   = self._make_int_spin(64, 1, 441000,
-                                               "Ignore ZC gaps smaller than this")
-        self._max_spin   = self._make_int_spin(4096, 1, 441000,
-                                               "Ignore ZC gaps larger than this")
+        start_row = QHBoxLayout()
+        start_row.addWidget(QLabel("Start"))
+        start_row.addWidget(self._start_spin, 1)
+        start_row.addWidget(QLabel("smp"))
+        vbox.addLayout(start_row)
 
-        rows = [
-            ("Start",  self._start_spin, "smp"),
-            ("End",    self._end_spin,   "smp"),
-            ("Number", self._num_spin,   ""),
-            ("Min ZC", self._min_spin,   "smp"),
-            ("Max ZC", self._max_spin,   "smp"),
-        ]
-        for row, (label, widget, unit) in enumerate(rows):
-            grid.addWidget(QLabel(label), row, 0, Qt.AlignRight)
-            grid.addWidget(widget, row, 1)
-            if unit:
-                grid.addWidget(QLabel(unit), row, 2)
-        vbox.addLayout(grid)
-
-        # Start slider
-        vbox.addWidget(self._dim_label("Start marker"))
         self._start_slider = QSlider(Qt.Horizontal)
         self._start_slider.setRange(0, 441000)
         self._start_slider.setValue(0)
         self._start_slider.setToolTip("Drag to set Start position")
         vbox.addWidget(self._start_slider)
 
-        # End slider
-        vbox.addWidget(self._dim_label("End marker"))
+        # ---- End row + slider ----
+        self._end_spin = self._make_int_spin(0, 0, 441000,
+                                             "Samples from end to skip")
+        end_row = QHBoxLayout()
+        end_row.addWidget(QLabel("End"))
+        end_row.addWidget(self._end_spin, 1)
+        end_row.addWidget(QLabel("smp"))
+        vbox.addLayout(end_row)
+
         self._end_slider = QSlider(Qt.Horizontal)
         self._end_slider.setRange(0, 441000)
         self._end_slider.setValue(0)
         self._end_slider.setToolTip("Drag to set End position (samples from end)")
         vbox.addWidget(self._end_slider)
+
+        # ---- Remaining fields in a grid ----
+        self._num_spin = self._make_int_spin(16, 1, 9999,
+                                             "Number of waveforms to extract")
+        self._min_spin = self._make_int_spin(64, 1, 441000,
+                                             "Ignore ZC gaps smaller than this")
+        self._max_spin = self._make_int_spin(4096, 1, 441000,
+                                             "Ignore ZC gaps larger than this")
+
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        grid.setColumnStretch(1, 1)
+        for row, (label, widget, unit) in enumerate([
+            ("Number", self._num_spin,   ""),
+            ("Min ZC", self._min_spin,   "smp"),
+            ("Max ZC", self._max_spin,   "smp"),
+        ]):
+            grid.addWidget(QLabel(label), row, 0, Qt.AlignRight)
+            grid.addWidget(widget, row, 1)
+            if unit:
+                grid.addWidget(QLabel(unit), row, 2)
+        vbox.addLayout(grid)
 
         # Bidirectional wiring: spin <-> slider
         self._start_spin.valueChanged.connect(self._on_start_spin_changed)

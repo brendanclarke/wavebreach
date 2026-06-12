@@ -2,10 +2,12 @@
 ui/main_window.py
 MainWindow for Wavebreach.
 
-Phase 1: file load, waveform display, spectrum display, raw playback.
-Phase 2: live ZC + splitter wired to waveform overlays.
-Phase 2b: zoom/pos sliders on waveform; draggable Start/End markers;
-          draggable cutoff/Q on spectrum; all sliders in param panel.
+Phase 1 : file load, waveform/spectrum display, raw playback
+Phase 2 : live ZC + splitter overlays
+Phase 2b: zoom/pos sliders, draggable markers, spectrum filter drag
+Phase 3 : Go button -> ProcessWorker (QThread) -> processed waveforms
+          Filter applied to original-file preview playback
+          Filter response overlay pushed to spectrum view
 """
 
 from __future__ import annotations
@@ -13,11 +15,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
+
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QSizePolicy,
     QSplitter, QFrame, QStatusBar, QMessageBox,
+    QProgressDialog,
 )
 
 from core.state import AppState
@@ -25,6 +30,8 @@ from core.audio_io import load_audio
 from core.playback import PlaybackController
 from core.zero_crossing import detect, compute_exclusions, filter_usable
 from core.splitter import select_regions
+from core.filter_dsp import design_filter, apply_filter, compute_response
+from core.processor import ProcessWorker
 from ui.waveform_view import WaveformView
 from ui.spectrum_view import SpectrumView
 from ui.param_panel import ParamPanel
@@ -73,6 +80,8 @@ class MainWindow(QMainWindow):
         self._state    = AppState()
         self._playback = PlaybackController()
         self._load_thread: QThread | None = None
+        self._proc_thread: QThread | None = None
+        self._progress_dlg: QProgressDialog | None = None
 
         self._build_ui()
         self._update_playback_buttons(False)
@@ -93,57 +102,42 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Waveform view (includes zoom/pos sliders internally)
         self._wave_view = WaveformView()
         root.addWidget(self._wave_view)
-
         root.addWidget(self._make_divider())
 
-        # File row
         root.addLayout(self._build_file_row())
-
         root.addWidget(self._make_divider())
 
-        # Spectrum view
         self._spec_view = SpectrumView()
         root.addWidget(self._spec_view)
-
         root.addWidget(self._make_divider())
 
-        # Bottom split
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(1)
-
         self._param_panel    = ParamPanel(self._state)
         self._playback_panel = PlaybackPanel(self._state)
         self._param_panel.setMinimumWidth(300)
         self._playback_panel.setMinimumWidth(300)
-
         splitter.addWidget(self._param_panel)
         splitter.addWidget(self._playback_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, 1)
 
-        # Status bar
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready -- open an audio file to begin.")
 
         # ---- Signal wiring ----
-
-        # Param panel
         self._param_panel.go_requested.connect(self._on_go)
         self._param_panel.params_changed.connect(self._on_params_changed)
 
-        # Waveform marker drags -> param panel spinboxes/sliders
         self._wave_view.start_changed.connect(self._on_start_marker_dragged)
         self._wave_view.end_changed.connect(self._on_end_marker_dragged)
 
-        # Spectrum drag -> param panel cutoff/Q
         self._spec_view.cutoff_changed.connect(self._param_panel.set_cutoff)
         self._spec_view.q_changed.connect(self._param_panel.set_q)
 
-        # Playback panel
         self._playback_panel.prev_requested.connect(self._on_prev)
         self._playback_panel.next_requested.connect(self._on_next)
         self._playback_panel.play_all_requested.connect(self._on_play_all)
@@ -202,10 +196,10 @@ class MainWindow(QMainWindow):
         self._param_panel.set_file_loaded(False)
 
         self._state.all_zero_crossings = []
-        self._state.excluded_min = []
-        self._state.excluded_max = []
-        self._state.selected_waves = []
-        self._state.processed_waves = []
+        self._state.excluded_min       = []
+        self._state.excluded_max       = []
+        self._state.selected_waves     = []
+        self._state.processed_waves    = []
 
         self._load_thread = QThread(self)
         self._worker = _LoadWorker(path)
@@ -234,19 +228,10 @@ class MainWindow(QMainWindow):
         )
 
         self._update_playback_buttons(True)
-        # Pass total_samples so Start/End sliders get correct range
         self._param_panel.set_file_loaded(True, total_samples=len(samples))
-
-        # Initial markers at 0 / 0
         self._wave_view.set_markers(0, 0)
 
-        # Sync spectrum display with current filter params
-        self._spec_view.set_filter_params(
-            self._state.filter_cutoff,
-            self._state.filter_q,
-            self._state.filter_mode,
-        )
-
+        self._sync_filter_display()
         self._run_tier1()
 
     def _on_load_error(self, message: str) -> None:
@@ -259,31 +244,19 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_start_marker_dragged(self, val: int) -> None:
-        """Waveform canvas dragged start marker -- push to param panel."""
         self._param_panel.set_start_pad(val)
-        # params_changed will fire from set_start_pad -> _emit_changed
 
     def _on_end_marker_dragged(self, val: int) -> None:
-        """Waveform canvas dragged end marker -- push to param panel."""
         self._param_panel.set_end_pad(val)
 
     # ------------------------------------------------------------------
-    # Tier-1: ZC detection + splitter
+    # Tier-1: ZC detection + splitter (lightweight, main thread)
     # ------------------------------------------------------------------
 
     def _on_params_changed(self) -> None:
         self._param_panel.read_into_state()
-        # Keep spectrum display in sync with filter param changes
-        self._spec_view.set_filter_params(
-            self._state.filter_cutoff,
-            self._state.filter_q,
-            self._state.filter_mode,
-        )
-        # Keep waveform markers in sync with spinbox changes
-        self._wave_view.set_markers(
-            self._state.start_pad,
-            self._state.end_pad,
-        )
+        self._sync_filter_display()
+        self._wave_view.set_markers(self._state.start_pad, self._state.end_pad)
         self._run_tier1()
 
     def _run_tier1(self) -> None:
@@ -310,30 +283,123 @@ class MainWindow(QMainWindow):
         s.selected_waves = regions
 
         self._wave_view.set_regions(regions, exc_min, exc_max)
-
         self.statusBar().showMessage(
             f"{Path(s.source_path).name}  |  "
-            f"{len(all_zcs)} ZCs  |  "
-            f"{len(usable)} usable  |  "
+            f"{len(all_zcs)} ZCs  |  {len(usable)} usable  |  "
             f"{len(regions)} regions selected"
         )
+
+    # ------------------------------------------------------------------
+    # Filter display sync (spectrum overlay + param panel display)
+    # ------------------------------------------------------------------
+
+    def _sync_filter_display(self) -> None:
+        """Update spectrum filter marker and response overlay."""
+        s = self._state
+        self._spec_view.set_filter_params(s.filter_cutoff, s.filter_q, s.filter_mode)
+
+        # Compute and push filter frequency response for overlay
+        try:
+            sos = design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, s.sample_rate)
+            freqs, db = compute_response(sos, s.sample_rate)
+            self._spec_view.set_filter_response(freqs, db)
+        except Exception as exc:
+            logger.warning("Filter response compute failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Tier-2: Go button -> ProcessWorker
+    # ------------------------------------------------------------------
+
+    def _on_go(self) -> None:
+        self._param_panel.read_into_state()
+        self._run_tier1()
+
+        s = self._state
+        if not s.selected_waves:
+            QMessageBox.warning(
+                self, "Nothing to Process",
+                "No valid waveform regions were found with the current parameters.\n"
+                "Try adjusting Start, End, Min ZC, or Max ZC."
+            )
+            return
+
+        # Progress dialog
+        total = len(s.selected_waves)
+        self._progress_dlg = QProgressDialog(
+            "Processing waveforms...", "Cancel", 0, total, self
+        )
+        self._progress_dlg.setWindowTitle("Wavebreach")
+        self._progress_dlg.setWindowModality(Qt.WindowModal)
+        self._progress_dlg.setMinimumDuration(0)
+        self._progress_dlg.setValue(0)
+
+        # Worker thread
+        self._proc_thread = QThread(self)
+        self._proc_worker = ProcessWorker(s)
+        self._proc_worker.moveToThread(self._proc_thread)
+
+        self._proc_thread.started.connect(self._proc_worker.run)
+        self._proc_worker.progress.connect(self._on_proc_progress)
+        self._proc_worker.finished.connect(self._on_proc_finished)
+        self._proc_worker.error.connect(self._on_proc_error)
+        self._proc_worker.finished.connect(self._proc_thread.quit)
+        self._proc_worker.error.connect(self._proc_thread.quit)
+        self._progress_dlg.canceled.connect(self._proc_thread.requestInterruption)
+
+        self._proc_thread.start()
+
+    def _on_proc_progress(self, current: int, total: int) -> None:
+        if self._progress_dlg:
+            self._progress_dlg.setValue(current)
+
+    def _on_proc_finished(self, waves: list) -> None:
+        if self._progress_dlg:
+            self._progress_dlg.close()
+            self._progress_dlg = None
+
+        self._state.processed_waves    = waves
+        self._state.current_wave_index = 0
+
+        self._playback_panel.set_processed(waves)
+        if waves:
+            self._playback_panel.show_wave(0, len(waves))
+
+        self.statusBar().showMessage(
+            f"Done -- {len(waves)} waveforms processed, "
+            f"{len(waves[0]) if waves else 0} samples each."
+        )
+
+    def _on_proc_error(self, message: str) -> None:
+        if self._progress_dlg:
+            self._progress_dlg.close()
+            self._progress_dlg = None
+        QMessageBox.critical(self, "Processing Error", message)
+        self.statusBar().showMessage("Processing failed.")
 
     # ------------------------------------------------------------------
     # Playback
     # ------------------------------------------------------------------
 
     def _on_play_original(self) -> None:
-        if self._state.raw_samples is None:
+        """Play raw file with filter applied (Phase 3)."""
+        s = self._state
+        if s.raw_samples is None:
             return
-        self._playback.play_array(self._state.raw_samples, self._state.sample_rate)
-        self._update_playback_buttons(True)
+
+        # Apply filter offline before playback
+        try:
+            sos     = design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, s.sample_rate)
+            audio   = apply_filter(s.raw_samples, sos)
+        except Exception:
+            audio = s.raw_samples
+
+        self._playback.play_array(audio, s.sample_rate)
 
     def _on_play_all(self, speed: float, loop: bool) -> None:
         waves = self._state.processed_waves
         if not waves:
             return
-        import numpy as np
-        combined = np.concatenate(waves)
+        combined    = np.concatenate(waves)
         effective_sr = max(1000, min(int(self._state.sample_rate * speed), 192000))
         self._playback.play_array(combined, effective_sr)
         self._playback_panel.set_playing(True)
@@ -363,15 +429,8 @@ class MainWindow(QMainWindow):
             self._state.current_wave_index, len(self._state.processed_waves))
 
     # ------------------------------------------------------------------
-    # Go / Export
+    # Export (Phase 5)
     # ------------------------------------------------------------------
-
-    def _on_go(self) -> None:
-        self._param_panel.read_into_state()
-        self._run_tier1()
-        self.statusBar().showMessage(
-            "GO: ZC selection updated. Full DSP pipeline coming in Phase 3."
-        )
 
     def _on_export(self) -> None:
         self.statusBar().showMessage("Export not yet implemented (Phase 5).")

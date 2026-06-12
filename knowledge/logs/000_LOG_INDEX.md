@@ -28,6 +28,7 @@ Cross-references point to relevant sections of PLANNING.md and CLAUDE.md.
 | DSP pipeline order | PLANNING.md §7 | Session 003 (Phase 3) |
 | Filter SVF biquad formulation | PLANNING.md §9 | Session 003 (Phase 3) |
 | pyrubberband stretch wrapper | PLANNING.md §9 | Session 003 (Phase 3) |
+| [004](004_SESSION_LOG.md) | 2026-06-12 | Phase 3+4 | Full DSP pipeline: filter_dsp, stretcher, modifier, processor (QThread), filtered playback, spectrum overlay, slider layout fix |
 | [003](003_SESSION_LOG.md) | 2026-06-10 | Phase 2b | Draggable UI elements: waveform zoom/position sliders, draggable Start/End markers on waveform canvas, draggable cutoff (L/R) and Q (U/D) on spectrum canvas, log-scale sliders for cutoff and Q in param panel, all controls bidirectionally wired |
 
 ---
