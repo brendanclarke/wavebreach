@@ -32,14 +32,16 @@ from PySide6.QtWidgets import QWidget, QSizePolicy
 # Colours
 # ---------------------------------------------------------------------------
 BG_COLOR        = QColor(0x12, 0x12, 0x18)
-SPEC_FILL_TOP   = QColor(0x3A, 0x7B, 0xFF, 180)
-SPEC_FILL_BOT   = QColor(0x1A, 0x3A, 0x88,  60)
+SPEC_FILL_TOP   = QColor(0x3A, 0x7B, 0xFF, 100)   # dimmed when filter active
+SPEC_FILL_BOT   = QColor(0x1A, 0x3A, 0x88,  35)
+SPEC_FILL_TOP_INACTIVE = QColor(0x3A, 0x7B, 0xFF, 180)   # full brightness when Off
+SPEC_FILL_BOT_INACTIVE = QColor(0x1A, 0x3A, 0x88,  60)
 SPEC_LINE       = QColor(0x5A, 0x9B, 0xFF, 220)
 GRID_COLOR      = QColor(0x30, 0x30, 0x40)
 GRID_TEXT_COLOR = QColor(0x55, 0x55, 0x70)
 CUTOFF_LINE     = QColor(0xFF, 0xCC, 0x44, 200)   # amber cutoff marker
 CUTOFF_LABEL    = QColor(0xFF, 0xCC, 0x44, 230)
-FILTER_OVERLAY  = QColor(0x64, 0xB4, 0xFF,  55)   # Phase 3
+FILTER_OVERLAY  = QColor(0xFF, 0xA0, 0x20, 110)   # amber, more opaque for contrast
 
 FREQ_MIN = 20.0
 FREQ_MAX = 22050.0
@@ -250,26 +252,27 @@ class SpectrumView(QWidget):
         path.lineTo(_freq_to_x(self._freqs[-1], w), h)
         path.closeSubpath()
 
+        # Dim the raw spectrum when filter is active so the overlay is readable
+        filter_active = self._filter_mode != "OFF"
+        top = SPEC_FILL_TOP if filter_active else SPEC_FILL_TOP_INACTIVE
+        bot = SPEC_FILL_BOT if filter_active else SPEC_FILL_BOT_INACTIVE
         grad = QLinearGradient(0, 0, 0, h)
-        grad.setColorAt(0.0, SPEC_FILL_TOP)
-        grad.setColorAt(1.0, SPEC_FILL_BOT)
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(1.0, bot)
         p.fillPath(path, grad)
         p.setPen(QPen(SPEC_LINE, 1))
         p.drawPath(path)
 
     def _draw_filter_overlay(self, p: QPainter, w: int, h: int) -> None:
-        """Draw filter frequency response as a semi-transparent blue overlay."""
+        """Draw filter frequency response overlay. Hidden when filter is Off."""
+        if self._filter_mode == "OFF":
+            return
         if self._filter_resp_freqs is None or self._filter_resp_db is None:
             return
 
         freqs = self._filter_resp_freqs
         db    = self._filter_resp_db
 
-        # Build a filled path: top edge = filter response curve,
-        # bottom = 0 dB line (top of widget), so we fill the pass-band area.
-        # We draw above the 0-dB reference line for the pass-band,
-        # and clip everything that dips below -3 dB as the stop-band.
-        # Simpler: fill between response and bottom, so pass = tall fill, stop = short fill.
         path = QPainterPath()
         started = False
         last_x = 0.0
@@ -295,8 +298,8 @@ class SpectrumView(QWidget):
 
         p.fillPath(path, FILTER_OVERLAY)
 
-        # Draw the response curve line on top
-        p.setPen(QPen(QColor(0x80, 0xC0, 0xFF, 180), 1))
+        # Bold response curve line
+        p.setPen(QPen(QColor(0xFF, 0xC0, 0x40, 220), 2))
         path2 = QPainterPath()
         started = False
         for freq, d in zip(freqs, db):
@@ -312,15 +315,18 @@ class SpectrumView(QWidget):
         p.drawPath(path2)
 
     def _draw_cutoff_marker(self, p: QPainter, w: int, h: int) -> None:
-        """Draw the amber cutoff line + label with Q value."""
-        x = _freq_to_x(self._cutoff_hz, w)
+        """Draw the amber cutoff line + label with Q value. Hidden when filter is Off."""
+        if self._filter_mode == "OFF":
+            return
+
+        x  = _freq_to_x(self._cutoff_hz, w)
         xi = int(x)
 
-        # Line
+        # Dashed vertical line
         p.setPen(QPen(CUTOFF_LINE, 1, Qt.DashLine))
         p.drawLine(xi, 0, xi, h)
 
-        # Label: "8000 Hz  Q:0.71"
+        # Label
         hz_str = f"{self._cutoff_hz:.0f} Hz" if self._cutoff_hz >= 100 else \
                  f"{self._cutoff_hz:.1f} Hz"
         label = f"{hz_str}  Q:{self._q:.2f}  {self._filter_mode}"
@@ -333,12 +339,12 @@ class SpectrumView(QWidget):
             lx = xi - 134
         p.drawText(lx, 14, label)
 
-        # Small diamond handle at top of line
+        # Diamond handle at midpoint
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QPolygon
         p.setBrush(CUTOFF_LINE)
         p.setPen(Qt.NoPen)
         d = 5
-        from PySide6.QtCore import QPoint
-        from PySide6.QtGui import QPolygon
         diamond = QPolygon([
             QPoint(xi,     h // 2 - d),
             QPoint(xi + d, h // 2),

@@ -1,7 +1,11 @@
 # Wavebreach
 
-Wavebreach is a dumb little utility for splitting an audio file into single-cycle waveforms to make a wavetable or bolognese or whatever. 
-Maybe it will sound cool and be useful. Maybe it won't. Who knows!?!?
+A desktop utility for slicing short audio files into single-cycle wavetable sets.
+
+Load an audio file (up to 10 seconds), define how it should be split at
+zero-crossings, apply per-waveform pitch, phase, and amplitude transforms,
+and export a numbered ZIP of WAV files ready to load into any wavetable
+synthesizer.
 
 ---
 
@@ -129,5 +133,5 @@ Each file is a single-cycle waveform at 44.1 kHz / 16-bit mono PCM.
 
 ## Project Structure
 
-See `MEMORY.md` for the full directory layout and architecture notes.
+See `CLAUDE.md` for the full directory layout and architecture notes.
 See `PLANNING.md` for the full design and implementation plan.

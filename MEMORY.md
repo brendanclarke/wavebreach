@@ -129,11 +129,14 @@ The Offset shifts the *window* around the fixed central ZC:
 | Phase | Description | Status |
 |---|---|---|
 | 1 | Skeleton, audio I/O, waveform + spectrum display, raw playback | COMPLETE |
-| 2 | ZC detection, splitter, live waveform overlays | IN PROGRESS |
-| 3 | Full DSP pipeline (Modify, stretch, filter, normalize), Go button | TODO |
-| 4 | Spectrum filter overlay | TODO |
+| 2 | ZC detection, splitter, live waveform overlays | COMPLETE |
+| 2b | Interactive controls: zoom/pos sliders, draggable markers, spectrum drag | COMPLETE |
+| 3 | Full DSP pipeline (Modify, stretch, filter, normalize), Go button | COMPLETE |
+| 4 | Spectrum filter overlay | COMPLETE |
 | 5 | Processed playback, Prev/Next, export ZIP | TODO |
 | 6 | Polish, validation, edge cases | TODO |
+| 7 | User feedback round 1: filter contrast, Off mode, edge direction, avg length, CycleView fix | COMPLETE |
+| 7 | User testing feedback round 1 (5 issues: filter overlay legibility, filter Off mode, length/pitch average display, edge-direction ZC filtering, CycleView scaling) | PLANNED (not yet implemented) |
 
 ---
 
@@ -170,3 +173,20 @@ conda install -c conda-forge numpy scipy soundfile sounddevice pydub pyrubberban
   correct but means a brief repaint on window resize for long files.
 - Tier-1 updates (ZC + splitter) run on the main thread. If profiling shows
   lag on maximal-length files, move to a QThread.
+- **[CONFIRMED BUG, see PLANNING.md Phase 7.1]** Spectrum filter overlay
+  (`ui/spectrum_view.py :: _draw_filter_overlay`) is rendered correctly but
+  too faintly (alpha=55) to read against the raw spectrum fill underneath
+  it. The filter response data updates correctly on every cutoff/Q change;
+  only the visual contrast is wrong. Do not "fix" the data pipeline for
+  this issue -- it is a rendering/contrast problem only.
+- **[CONFIRMED BUG, see PLANNING.md Phase 7.5]** `CycleView`
+  (`ui/playback_panel.py`) stretches any array to fill its pixel width with
+  no length validation or visual reference. Before fixing the display,
+  verify `core/processor.py` is actually producing `target_len`-sample
+  waveforms (add an assertion) to rule out a silent upstream length defect.
+- **[PLANNED, not yet built, see PLANNING.md Phase 7.4]**
+  `core/zero_crossing.py :: detect()` currently returns position-only data
+  with no slope/direction. Edge-direction filtering (Rising/Falling/None)
+  requires extending this return type -- check call sites in
+  `core/splitter.py` and `core/zero_crossing.py :: filter_usable()` if
+  modifying the return signature.

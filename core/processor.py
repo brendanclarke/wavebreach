@@ -82,8 +82,11 @@ class ProcessWorker(QObject):
         else:
             target_len = max(1, int(s.length_samples))
 
-        # --- Filter design ---
-        sos = filter_dsp.design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, sr)
+        # --- Filter design (None when OFF) ---
+        if s.filter_mode == "OFF":
+            sos = None
+        else:
+            sos = filter_dsp.design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, sr)
 
         # --- Normalise target ---
         if s.normalize_enabled:
@@ -109,8 +112,9 @@ class ProcessWorker(QObject):
             # Length normalise
             wave = stretcher.stretch_to_length(chunk, target_len, sr)
 
-            # Filter
-            wave = filter_dsp.apply_filter(wave, sos)
+            # Filter (skip if OFF)
+            if sos is not None:
+                wave = filter_dsp.apply_filter(wave, sos)
 
             # Peak normalise
             if norm_peak is not None:
@@ -120,6 +124,17 @@ class ProcessWorker(QObject):
 
             # Hard clip to [-1, 1] for safety
             wave = np.clip(wave, -1.0, 1.0)
+
+            # Verify length matches target (catches pipeline bugs)
+            if len(wave) != target_len:
+                logger.warning(
+                    "Wave %d length mismatch: expected %d, got %d. Zero-padding.",
+                    k, target_len, len(wave)
+                )
+                if len(wave) < target_len:
+                    wave = np.concatenate([wave, np.zeros(target_len - len(wave))])
+                else:
+                    wave = wave[:target_len]
 
             processed.append(wave.astype(np.float64))
 

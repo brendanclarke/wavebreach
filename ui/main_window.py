@@ -265,7 +265,7 @@ class MainWindow(QMainWindow):
             return
 
         all_zcs = detect(s.raw_samples)
-        s.all_zero_crossings = all_zcs
+        s.all_zero_crossings = [zc[0] for zc in all_zcs]   # positions only for state
 
         exc_min, exc_max = compute_exclusions(all_zcs, s.min_samples, s.max_samples)
         s.excluded_min = exc_min
@@ -274,15 +274,25 @@ class MainWindow(QMainWindow):
         usable = filter_usable(
             all_zcs, exc_min, exc_max,
             s.start_pad, s.end_pad, s.duration_samples,
+            edge_mode=s.edge_mode,
         )
 
         regions = select_regions(
             usable, s.num_waves,
             s.start_pad, s.end_pad, s.duration_samples,
+            edge_mode=s.edge_mode,
         )
         s.selected_waves = regions
 
         self._wave_view.set_regions(regions, exc_min, exc_max)
+
+        # Compute average region length for diagnostic display
+        if regions:
+            avg_smp = sum(r.end_zc - r.begin_zc for r in regions) / len(regions)
+        else:
+            avg_smp = 0.0
+        self._param_panel.set_avg_length(avg_smp)
+
         self.statusBar().showMessage(
             f"{Path(s.source_path).name}  |  "
             f"{len(all_zcs)} ZCs  |  {len(usable)} usable  |  "
@@ -298,7 +308,10 @@ class MainWindow(QMainWindow):
         s = self._state
         self._spec_view.set_filter_params(s.filter_cutoff, s.filter_q, s.filter_mode)
 
-        # Compute and push filter frequency response for overlay
+        if s.filter_mode == "OFF":
+            self._spec_view.set_filter_response(None, None)
+            return
+
         try:
             sos = design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, s.sample_rate)
             freqs, db = compute_response(sos, s.sample_rate)
@@ -381,17 +394,19 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_play_original(self) -> None:
-        """Play raw file with filter applied (Phase 3)."""
+        """Play raw file with filter applied (or bypass if Off)."""
         s = self._state
         if s.raw_samples is None:
             return
 
-        # Apply filter offline before playback
-        try:
-            sos     = design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, s.sample_rate)
-            audio   = apply_filter(s.raw_samples, sos)
-        except Exception:
+        if s.filter_mode == "OFF":
             audio = s.raw_samples
+        else:
+            try:
+                sos   = design_filter(s.filter_mode, s.filter_cutoff, s.filter_q, s.sample_rate)
+                audio = apply_filter(s.raw_samples, sos)
+            except Exception:
+                audio = s.raw_samples
 
         self._playback.play_array(audio, s.sample_rate)
 

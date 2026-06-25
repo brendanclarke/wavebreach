@@ -93,6 +93,15 @@ The output is a ZIP file of numbered 44.1 kHz / 16-bit mono WAV files.
 
 ## 5. Processing Parameters (full specification)
 
+### Edge (added Phase 7)
+Horizontal radio button group at top of SLICE panel: Rising / Falling / None.
+Constrains which zero-crossings are eligible to serve as a region's
+**central** ZC, based on slope direction at the crossing.
+- **None** (default): no constraint -- any ZC may be central (current/original behaviour)
+- **Rising**: only negative-to-positive transitions eligible as central ZC
+- **Falling**: only positive-to-negative transitions eligible as central ZC
+- Begin/end ZCs of a region are unconstrained -- only the central ZC is filtered
+
 ### Start
 Samples padded/skipped at front of file before first waveform selection.
 
@@ -124,11 +133,14 @@ All waveforms are time-stretched to this length after slicing.
 ### Filter
 Resonant multi-mode filter applied to each exported waveform.
 Also applied to original-file preview playback.
-- **Mode:** LP / HP / BP (radio button)
-- **Cutoff:** 20-22000 Hz
+- **Mode:** LP / HP / BP / Off (radio button) -- Off added Phase 7
+- **Cutoff:** 20-22000 Hz. Defined as the -3dB (half-power) point.
+  Beyond cutoff, the 2-pole filter rolls off at 12 dB/octave (not a hard
+  wall). Confirmed acceptable definition in Phase 7 review.
 - **Q:** 0.1-10.0 (resonance; 0.707 = Butterworth / no resonance)
 - **Implementation:** Direct SVF biquad formulation, 2-pole fixed
 - Shown as semi-transparent overlay on spectrum display
+  (legibility fix pending -- see Phase 7.1)
 
 ### Normalize
 Peak normalization of exported waveforms.
@@ -283,6 +295,145 @@ Order of operations per waveform, applied after slicing:
 - Final integration testing with real audio files
 - README review and dependency instruction verification
 
+### Phase 7 — User Testing Feedback Round 1 [DONE]
+Issues identified by user testing the Phase 3 build (screenshot-driven review).
+Each item tagged `[BUG]` (existing code not behaving as designed) or `[NEW]`
+(functionality not yet built, was out of scope until now).
+
+**Cutoff definition (resolved in discussion):** cutoff = the -3dB point
+(half-power / ~71% amplitude). Beyond cutoff, a 2-pole filter rolls off at
+12 dB/octave -- not a hard wall, but a defined, standard slope. Confirmed
+acceptable by user; no change to the underlying filter math.
+
+#### 7.1 Filter cutoff display bug `[BUG]`
+**Symptom:** dragging the cutoff handle on the spectrum view moves the
+amber marker line and label, but the visible "hump" of energy in the
+spectrum display does not appear to move, making it look like the filter
+isn't responding.
+
+**Root cause (confirmed by code trace):** the spectrum view draws two
+independent things stacked on the same canvas:
+  1. The raw file's FFT silhouette (`_draw_spectrum`) -- this is the
+     harmonic content of the loaded audio itself and is correctly static;
+     it should NOT move when the filter changes.
+  2. The filter frequency response overlay (`_draw_filter_overlay`) -- this
+     DOES update correctly on every cutoff/Q change (verified: the signal
+     chain `spectrum drag -> param_panel.set_cutoff() -> state.filter_cutoff
+     -> MainWindow._sync_filter_display() -> spec_view.set_filter_response()`
+     round-trips correctly).
+
+The actual defect is **rendering legibility**: the filter overlay
+(`FILTER_OVERLAY = QColor(0x64, 0xB4, 0xFF, 55)`, alpha 55/255) is too faint
+against the dominant raw spectrum fill to read as a distinct, moving shape.
+The data is correct; the visual presentation fails to communicate it.
+
+A secondary contributing factor: at Q values below 0.707 (the Butterworth
+point), the 2-pole biquad response is broad and gently sloped rather than a
+sharp "wall," which can look like "nothing is happening" even when the
+response has moved, especially when half-buried under the raw spectrum.
+
+**Fix direction (Phase 7 implementation):**
+- Increase contrast between raw spectrum and filter overlay (e.g. dim the
+  raw spectrum fill further when a filter is active and not bypassed,
+  and/or draw the filter response line with a bolder stroke / higher
+  contrast colour).
+- Consider drawing the filter response as the dominant visual element
+  rather than a thin overlay, since it's the actionable, user-controlled
+  element.
+- No change needed to the underlying filter math -- cutoff definition
+  confirmed correct as the -3dB point.
+
+#### 7.2 Filter Off mode `[NEW]`
+Add a fourth filter mode: **Off** (bypass). Alongside LP / HP / BP as a
+fourth radio button.
+- When Off is selected: `core/processor.py` skips `filter_dsp.apply_filter()`
+  entirely for exported waveforms.
+- `MainWindow._on_play_original()` skips filter application for preview
+  playback when Off is selected.
+- Spectrum view filter overlay either hidden or shown as a flat 0dB line
+  when Off is active.
+- `AppState.filter_mode` gains a fourth valid value: `"OFF"`.
+
+#### 7.3 Length / Pitch average display `[NEW]`
+When Start, End, Min ZC, Max ZC, or Number change (i.e. whenever the
+splitter reselects regions), the Length group's non-active field should
+update to show the **average** actual cycle length/pitch across all
+currently selected regions -- not just echo the user's last typed value.
+
+- If "Pitch (Hz)" is the active radio button: the Hz field remains
+  user-editable as today, but the **Samples** display should additionally
+  reflect... (need to clarify: does the user want the *target* samples
+  value used for stretching, which is already derived from Hz exactly via
+  `44100/Hz`, OR do they want a *diagnostic* readout of what the average
+  raw region length currently is, before stretching, so they can see how
+  far off the source material is from their target? Based on context this
+  reads as the latter -- a diagnostic/informational average, not the
+  stretch target. This needs one clarifying question before implementation.)
+- Likely implementation: `MainWindow._run_tier1()` computes
+  `avg_length_samples = mean(region.end_zc - region.begin_zc for region in
+  selected_waves)` and pushes it to a new informational label in
+  `ParamPanel` (distinct from the existing Hz/Samples target fields, to
+  avoid overwriting the user's input).
+
+#### 7.4 Edge-direction filtering for zero-crossing selection `[NEW]`
+Add a horizontal radio button group at the top of the SLICE panel:
+**Edge: Rising / Falling / None**
+
+- **None** (default): current behaviour, unchanged -- any zero-crossing
+  may serve as a central ZC regardless of slope direction.
+- **Rising**: only zero-crossings where the signal transitions from
+  negative to positive (slope > 0 at the crossing) are eligible as a
+  *central* ZC for a selected region.
+- **Falling**: only zero-crossings where the signal transitions from
+  positive to negative (slope < 0) are eligible as a central ZC.
+- Begin/end ZCs of a region are unaffected by this filter -- only the
+  central ZC's direction is constrained, per the user's wording
+  ("central zero-crossing edges should be falling/rising").
+
+**Implementation scope (confirmed by code trace):**
+`core/zero_crossing.py :: detect()` currently returns only float positions,
+with no slope/direction metadata. This needs to change to return direction
+alongside position (e.g. a list of `(position, is_rising)` tuples, or a
+parallel array). `core/splitter.py :: select_regions()` needs a new
+`edge_mode` parameter that filters candidate triplets by the direction of
+the triplet's center ZC before the nearest-match assignment step.
+
+#### 7.5 Single-cycle preview scaling bug `[BUG]`
+**Symptom:** the single-cycle waveform preview (right panel, `CycleView`)
+does not appear to show a clean, correctly-scaled single cycle matching the
+configured Length parameter -- the displayed shape looks stretched or
+arbitrary rather than a clear periodic waveform of the expected length.
+
+**Root cause (confirmed by code trace):** `CycleView.paintEvent()` maps
+whatever array it is given to the full widget pixel width using simple
+proportional index mapping (`idx = int(x / w * n)`), with **no validation
+or visual reference for the actual sample count** `n`. This means:
+  1. If the processed waveform genuinely is `length: smp` samples (which it
+     should be, since `core/processor.py` calls
+     `stretcher.stretch_to_length(chunk, target_len, sr)` for every region),
+     the display will still look "correct" in the sense of filling the
+     window, but gives the user no way to visually confirm the sample count
+     or judge whether the shape is a clean single cycle.
+  2. If the processed waveform is NOT actually `target_len` samples (a
+     possible defect in the modifier/stretch chain producing malformed
+     output), this display bug would mask that defect, since any array
+     length is stretched to fill the same visual space identically.
+
+**This needs verification, not just a display fix.** Before correcting
+`CycleView`, Phase 7 implementation should add an assertion / debug check
+in `core/processor.py` confirming `len(wave) == target_len` for every
+processed waveform, to rule out a silent length-mismatch bug upstream of
+the display layer.
+
+**Fix direction (Phase 7 implementation):**
+- Add length assertion/logging in `processor.py` to confirm pipeline
+  correctness independent of the display.
+- `CycleView` should display a sample-count label (e.g. "100 smp") so the
+  user has a concrete reference matching the Length parameter.
+- Consider drawing a fixed-amplitude zero line and gridlines so the user
+  can visually judge periodicity and cleanliness of the cycle, similar to
+  the grid treatment already used in `SpectrumView`.
+
 ---
 
 ## 11. Fixed Design Decisions
@@ -309,3 +460,5 @@ Order of operations per waveform, applied after slicing:
 | Offset behaviour | Window shifts around fixed center ZC |
 | Stereo handling | Left channel only |
 | Export format | Plain numbered WAVs in ZIP, no metadata |
+| Filter cutoff definition | -3dB / half-power point, 2-pole = 12dB/oct rolloff beyond cutoff. Confirmed acceptable in Phase 7 review. |
+| Filter cutoff definition | The -3dB (half-power) point; 2-pole = 12dB/oct rolloff beyond cutoff. Confirmed acceptable in Phase 7 review. |

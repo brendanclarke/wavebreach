@@ -45,12 +45,14 @@ class AppState:
     length_hz: float = 440.0      # target pitch in Hz (when mode == "pitch")
     length_samples: int = 2048    # target length in samples (when mode == "samples")
 
-    filter_mode: str = "LP"       # "LP" | "HP" | "BP"
+    filter_mode: str = "LP"       # "LP" | "HP" | "BP" | "OFF"
     filter_cutoff: float = 8000.0
     filter_q: float = 0.707
 
     normalize_enabled: bool = True
     normalize_db: float = 0.0     # 0.0 to -3.0
+
+    edge_mode: str = "none"        # "none" | "rising" | "falling"
 
     # Modify — each has begin and end value; interpolated linearly across waves
     offset_begin: float = 0.0     # -0.5 to +0.5

@@ -2,13 +2,17 @@
 core/splitter.py
 WaveRegion selection algorithm.
 
-Takes a list of usable zero-crossings and selects up to *num_waves*
-evenly-spaced WaveRegion objects, each with a unique central ZC.
-
-Public API
-----------
-select_regions(usable_zcs, num_waves, start_pad, end_pad, total_samples)
+select_regions(usable_zcs, num_waves, start_pad, end_pad, total_samples,
+               edge_mode)
     -> list[WaveRegion]
+
+usable_zcs is now list[tuple[float, bool]] from zero_crossing.filter_usable().
+edge_mode controls which ZCs may serve as the *central* ZC of a region:
+  'none'    -- any ZC
+  'rising'  -- only rising-edge ZCs as center
+  'falling' -- only falling-edge ZCs as center
+
+Begin and end ZCs of a region are unrestricted by edge_mode.
 """
 
 from __future__ import annotations
@@ -20,44 +24,30 @@ from core.state import WaveRegion
 
 
 def select_regions(
-    usable_zcs: list[float],
+    usable_zcs: list[tuple[float, bool]],
     num_waves: int,
     start_pad: int,
     end_pad: int,
     total_samples: int,
+    edge_mode: str = "none",
 ) -> list[WaveRegion]:
-    """Select up to *num_waves* evenly-spaced WaveRegions from *usable_zcs*.
+    """Select up to *num_waves* evenly-spaced WaveRegions.
 
     Algorithm
     ---------
-    1.  Enumerate all valid candidate triplets (begin, center, end) from the
-        usable ZC list.  A triplet is valid when begin < center < end and all
-        three ZCs are in the work region.
+    1. Build candidate triplets (begin, center, end) from all adjacent
+       triples in usable_zcs.  For a triplet to be valid, its center ZC
+       must match edge_mode (if not 'none').  Begin/end ZCs are unrestricted.
 
-    2.  Compute *num_waves* evenly-spaced ideal positions across the work
-        region [start_pad, total_samples - end_pad].
+    2. Compute num_waves evenly-spaced ideal positions across the work region.
 
-    3.  For each ideal position, find the candidate triplet whose center ZC
-        is closest to that ideal position.
+    3. Greedy nearest-match: each ideal position claims the triplet whose
+       center ZC is nearest.
 
-    4.  Deduplicate: no two selected regions may share the same center ZC
-        (compared by rounded integer index).  On collision, keep the one with
-        the smaller distance from its ideal position; drop the other.
+    4. Deduplicate: no two regions may share the same center ZC (rounded int).
+       On collision keep the closer one.
 
-    5.  Return the survivors as an ordered list of WaveRegion objects.
-        The count may be less than *num_waves* if insufficient triplets exist.
-
-    Parameters
-    ----------
-    usable_zcs    : sorted list of usable (non-excluded, in-bounds) ZC positions
-    num_waves     : requested number of output waveforms
-    start_pad     : first sample of the work region
-    end_pad       : samples excluded at the end
-    total_samples : total length of the source audio array
-
-    Returns
-    -------
-    list[WaveRegion] sorted by begin_zc
+    5. Return sorted list of WaveRegion objects.
     """
     if len(usable_zcs) < 3 or num_waves < 1:
         return []
@@ -66,22 +56,26 @@ def select_regions(
     work_hi = float(total_samples - end_pad)
 
     # ------------------------------------------------------------------
-    # Step 1: build candidate triplets
+    # Step 1: candidate triplets
     # ------------------------------------------------------------------
-    # Each triplet: (begin_zc, center_zc, end_zc)
-    # All adjacent triplets from the usable list.  Because usable_zcs is
-    # already filtered to the work region, every triplet is in-bounds.
+    # A triplet is (begin_pos, center_pos, end_pos, begin_rising, center_rising)
+    # center must satisfy edge_mode; begin/end are free.
     candidates: list[tuple[float, float, float]] = []
     n = len(usable_zcs)
     for i in range(n - 2):
-        candidates.append((usable_zcs[i], usable_zcs[i + 1], usable_zcs[i + 2]))
+        b_pos, _         = usable_zcs[i]
+        c_pos, c_rising  = usable_zcs[i + 1]
+        e_pos, _         = usable_zcs[i + 2]
+
+        if edge_mode == "rising"  and not c_rising:
+            continue
+        if edge_mode == "falling" and     c_rising:
+            continue
+
+        candidates.append((b_pos, c_pos, e_pos))
 
     if not candidates:
         return []
-
-    # Pre-index candidates by center ZC for fast lookup
-    # center_map: rounded_int_center -> (triplet, index_in_candidates)
-    # We keep all candidates; the greedy step picks the nearest.
 
     # ------------------------------------------------------------------
     # Step 2: ideal positions
@@ -95,15 +89,13 @@ def select_regions(
     # ------------------------------------------------------------------
     # Step 3: nearest-match assignment
     # ------------------------------------------------------------------
-    # For each ideal position find the candidate whose center is closest
     assignments: list[Optional[tuple[float, float, float, float]]] = []
-    # Each entry: (begin, center, end, distance_from_ideal) or None
 
     for ideal in ideal_positions:
         best: Optional[tuple[float, float, float]] = None
         best_dist = math.inf
         for trip in candidates:
-            dist = abs(trip[1] - ideal)   # distance of center from ideal
+            dist = abs(trip[1] - ideal)
             if dist < best_dist:
                 best_dist = dist
                 best = trip
@@ -113,11 +105,9 @@ def select_regions(
             assignments.append(None)
 
     # ------------------------------------------------------------------
-    # Step 4: deduplicate by center ZC (rounded to int)
+    # Step 4: deduplicate by center ZC
     # ------------------------------------------------------------------
-    # Keep track of which rounded center ZCs have been claimed.
-    # On collision, the one with the larger distance is dropped (set None).
-    center_claimed: dict[int, int] = {}  # rounded_center -> index in assignments
+    center_claimed: dict[int, int] = {}
 
     for idx, assignment in enumerate(assignments):
         if assignment is None:
@@ -132,17 +122,15 @@ def select_regions(
             else:
                 _, _, _, prev_dist = prev
                 if dist < prev_dist:
-                    # New one is closer — drop the previous
                     assignments[prev_idx] = None
                     center_claimed[key] = idx
                 else:
-                    # Previous is closer — drop the new one
                     assignments[idx] = None
         else:
             center_claimed[key] = idx
 
     # ------------------------------------------------------------------
-    # Step 5: build WaveRegion objects from survivors
+    # Step 5: build WaveRegion objects
     # ------------------------------------------------------------------
     regions: list[WaveRegion] = []
     for assignment in assignments:
@@ -150,13 +138,12 @@ def select_regions(
             continue
         begin_zc, center_zc, end_zc, _ = assignment
         regions.append(WaveRegion(
-            begin_zc    = begin_zc,
-            center_zc   = center_zc,
-            end_zc      = end_zc,
-            begin_sample= math.floor(begin_zc),
-            end_sample  = math.ceil(end_zc),
+            begin_zc     = begin_zc,
+            center_zc    = center_zc,
+            end_zc       = end_zc,
+            begin_sample = math.floor(begin_zc),
+            end_sample   = math.ceil(end_zc),
         ))
 
-    # Sort by position (should already be ordered, but be defensive)
     regions.sort(key=lambda r: r.begin_zc)
     return regions

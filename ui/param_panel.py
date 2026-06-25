@@ -133,6 +133,16 @@ class ParamPanel(QWidget):
             self._start_spin.setRange(0, total_samples - 1)
             self._end_spin.setRange(0, total_samples - 1)
 
+    def set_avg_length(self, avg_samples: float) -> None:
+        """Update the diagnostic average region length label (called from MainWindow)."""
+        if avg_samples <= 0:
+            self._avg_length_label.setText("avg: --")
+        else:
+            avg_hz = 44100.0 / avg_samples if avg_samples > 0 else 0.0
+            self._avg_length_label.setText(
+                f"avg: {avg_samples:.0f} smp  /  {avg_hz:.1f} Hz"
+            )
+
     def set_start_pad(self, value: int) -> None:
         """Called externally (e.g. from waveform marker drag)."""
         self._start_spin.blockSignals(True)
@@ -180,6 +190,7 @@ class ParamPanel(QWidget):
         s.num_waves    = self._num_spin.value()
         s.min_samples  = self._min_spin.value()
         s.max_samples  = self._max_spin.value()
+        s.edge_mode    = self._edge_mode()
 
         s.length_mode    = "pitch" if self._length_pitch_rb.isChecked() else "samples"
         s.length_hz      = self._length_hz_spin.value()
@@ -211,6 +222,20 @@ class ParamPanel(QWidget):
         grp  = QGroupBox("SLICE")
         vbox = QVBoxLayout(grp)
         vbox.setSpacing(4)
+
+        # ---- Edge direction filter ----
+        edge_row = QHBoxLayout()
+        edge_row.addWidget(QLabel("Edge"))
+        self._edge_none_rb    = QRadioButton("None")
+        self._edge_rising_rb  = QRadioButton("Rising")
+        self._edge_falling_rb = QRadioButton("Falling")
+        self._edge_none_rb.setChecked(True)
+        self._edge_rb_group = QButtonGroup(self)
+        for btn in (self._edge_none_rb, self._edge_rising_rb, self._edge_falling_rb):
+            self._edge_rb_group.addButton(btn)
+            edge_row.addWidget(btn)
+        edge_row.addStretch()
+        vbox.addLayout(edge_row)
 
         # ---- Start row + slider ----
         self._start_spin = self._make_int_spin(0, 0, 441000,
@@ -270,6 +295,10 @@ class ParamPanel(QWidget):
         self._end_spin.valueChanged.connect(self._on_end_spin_changed)
         self._end_slider.valueChanged.connect(self._on_end_slider_changed)
 
+        # Edge mode radio buttons
+        for rb in (self._edge_none_rb, self._edge_rising_rb, self._edge_falling_rb):
+            rb.toggled.connect(self._emit_changed)
+
         self._layout.addWidget(grp)
 
     def _build_length_group(self) -> None:
@@ -316,6 +345,15 @@ class ParamPanel(QWidget):
         self._length_smp_spin.valueChanged.connect(self._on_smp_changed)
         self._on_length_mode_changed(False)
 
+        # Diagnostic: average actual region length from current selection
+        self._avg_length_label = QLabel("avg: --")
+        self._avg_length_label.setProperty("dim", True)
+        self._avg_length_label.setToolTip(
+            "Average actual cycle length of currently selected regions "
+            "(before stretching) -- diagnostic only, not the stretch target"
+        )
+        vbox.addWidget(self._avg_length_label)
+
         self._layout.addWidget(grp)
 
     def _build_filter_group(self) -> None:
@@ -324,16 +362,20 @@ class ParamPanel(QWidget):
         vbox.setSpacing(4)
 
         mode_row = QHBoxLayout()
-        self._filter_lp = QRadioButton("LP")
-        self._filter_hp = QRadioButton("HP")
-        self._filter_bp = QRadioButton("BP")
+        self._filter_lp  = QRadioButton("LP")
+        self._filter_hp  = QRadioButton("HP")
+        self._filter_bp  = QRadioButton("BP")
+        self._filter_off = QRadioButton("Off")
         self._filter_lp.setChecked(True)
         self._filter_rb_group = QButtonGroup(self)
-        for btn in (self._filter_lp, self._filter_hp, self._filter_bp):
+        for btn in (self._filter_lp, self._filter_hp, self._filter_bp, self._filter_off):
             self._filter_rb_group.addButton(btn)
             mode_row.addWidget(btn)
         mode_row.addStretch()
         vbox.addLayout(mode_row)
+
+        # Disable cutoff/Q controls when Off is selected
+        self._filter_off.toggled.connect(self._on_filter_off_toggled)
 
         # Cutoff spinbox
         cutoff_row = QHBoxLayout()
@@ -380,7 +422,7 @@ class ParamPanel(QWidget):
         self._filter_q_spin.valueChanged.connect(self._on_q_spin_changed)
         self._q_slider.valueChanged.connect(self._on_q_slider_changed)
 
-        for rb in (self._filter_lp, self._filter_hp, self._filter_bp):
+        for rb in (self._filter_lp, self._filter_hp, self._filter_bp, self._filter_off):
             rb.toggled.connect(self._emit_changed)
 
         self._layout.addWidget(grp)
@@ -568,6 +610,20 @@ class ParamPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _filter_mode(self) -> str:
-        if self._filter_hp.isChecked(): return "HP"
-        if self._filter_bp.isChecked(): return "BP"
+        if self._filter_hp.isChecked():  return "HP"
+        if self._filter_bp.isChecked():  return "BP"
+        if self._filter_off.isChecked(): return "OFF"
         return "LP"
+
+    def _edge_mode(self) -> str:
+        if self._edge_rising_rb.isChecked():  return "rising"
+        if self._edge_falling_rb.isChecked(): return "falling"
+        return "none"
+
+    def _on_filter_off_toggled(self, checked: bool) -> None:
+        """Dim cutoff/Q controls when filter is Off."""
+        enabled = not checked
+        self._filter_cutoff_spin.setEnabled(enabled)
+        self._cutoff_slider.setEnabled(enabled)
+        self._filter_q_spin.setEnabled(enabled)
+        self._q_slider.setEnabled(enabled)

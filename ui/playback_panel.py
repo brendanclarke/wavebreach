@@ -35,11 +35,19 @@ from core.state import AppState
 # ---------------------------------------------------------------------------
 
 class CycleView(QWidget):
-    """Displays a single single-cycle waveform as a 1-px polyline."""
+    """Displays a single processed single-cycle waveform.
 
-    BG    = QColor(0x12, 0x12, 0x18)
-    LINE  = QColor(0x3A, 0xC8, 0x7B)   # green tint to distinguish from main view
-    ZERO  = QColor(0x30, 0x30, 0x40)
+    Shows:
+      - Dark canvas with zero line and quarter-cycle grid
+      - Waveform as 1-px polyline (green)
+      - Sample count label (bottom-right) confirming length
+    """
+
+    BG      = QColor(0x12, 0x12, 0x18)
+    LINE    = QColor(0x3A, 0xC8, 0x7B)
+    ZERO    = QColor(0x40, 0x40, 0x50)
+    GRID    = QColor(0x28, 0x28, 0x38)
+    LABEL_C = QColor(0x44, 0x66, 0x44)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -62,6 +70,14 @@ class CycleView(QWidget):
         p.fillRect(0, 0, w, h, self.BG)
 
         cy = h // 2
+
+        # Quarter-cycle vertical grid lines
+        p.setPen(QPen(self.GRID, 1))
+        for frac in (0.25, 0.5, 0.75):
+            gx = int(w * frac)
+            p.drawLine(gx, 0, gx, h)
+
+        # Zero line
         p.setPen(QPen(self.ZERO, 1))
         p.drawLine(0, cy, w, cy)
 
@@ -77,18 +93,29 @@ class CycleView(QWidget):
         pen.setCosmetic(True)
         p.setPen(pen)
 
-        # Map samples to pixels — simple linear, draw polyline
-        points = []
+        # Min/max per pixel column for accuracy
         for x in range(w):
-            idx = int(x / w * n)
-            idx = min(idx, n - 1)
-            y = cy - self._samples[idx] * amp
-            points.append((x, y))
+            s0 = int(x * n / w)
+            s1 = int((x + 1) * n / w)
+            s1 = max(s1, s0 + 1)
+            s0 = min(s0, n - 1)
+            s1 = min(s1, n)
+            chunk = self._samples[s0:s1]
+            y_top = int(cy - chunk.max() * amp)
+            y_bot = int(cy - chunk.min() * amp)
+            if y_top == y_bot:
+                p.drawPoint(x, y_top)
+            else:
+                p.drawLine(x, y_top, x, y_bot)
 
-        for i in range(1, len(points)):
-            x0, y0 = points[i - 1]
-            x1, y1 = points[i]
-            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+        # Sample count label bottom-right
+        font = p.font()
+        font.setPointSize(8)
+        p.setFont(font)
+        p.setPen(self.LABEL_C)
+        p.drawText(QRect(0, h - 18, w - 4, 16),
+                   Qt.AlignRight | Qt.AlignVCenter,
+                   f"{n} smp")
 
         p.end()
 
