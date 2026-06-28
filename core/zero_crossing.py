@@ -143,11 +143,13 @@ def filter_usable(
     total_samples: int,
     edge_mode: str = "none",
 ) -> list[tuple[float, bool]]:
-    """Return ZCs inside the work region, not excluded, matching edge_mode.
+    """Return ZCs inside the work region and not in any excluded zone.
 
-    edge_mode : 'none'    -- no direction filter (default, all crossings)
-                'rising'  -- only rising-edge crossings (neg->pos)
-                'falling' -- only falling-edge crossings (pos->neg)
+    NOTE: edge_mode is accepted for API compatibility but does NOT filter
+    ZCs by direction here. Direction filtering of the *center* ZC only
+    happens in select_regions(). All non-excluded ZCs must be present in
+    the returned list so that the splitter can form complete triplets
+    (begin, center, end) where begin and end may be any direction.
 
     Work region: [start_pad, total_samples - end_pad]
     """
@@ -160,10 +162,6 @@ def filter_usable(
         if pos < lo or pos > hi:
             continue
         if any(s <= pos <= e for s, e in all_excluded):
-            continue
-        if edge_mode == "rising" and not is_rising:
-            continue
-        if edge_mode == "falling" and is_rising:
             continue
         usable.append((pos, is_rising))
 

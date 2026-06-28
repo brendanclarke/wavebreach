@@ -1,73 +1,114 @@
 """
 core/stretcher.py
-Time-stretch wrapper using pyrubberband (Rubber Band Library).
+High-quality time-stretch using the Rubber Band Library via pyrubberband.
 
-Falls back to scipy.signal.resample_poly if pyrubberband is not available,
-with a warning. The fallback is lower quality but keeps the app functional
-during development before rubberband-cli is installed.
+Rubber Band is a phase-vocoder-based time-stretcher that preserves pitch
+while changing duration. It requires:
+  pip install pyrubberband
+  system: rubberband-cli  (apt install rubberband-cli  /  brew install rubberband)
+
+There is NO fallback. resample_poly is not a time-stretch (it changes pitch)
+and is not acceptable for wavetable output. If pyrubberband is unavailable
+at import time, a clear RuntimeError is raised when stretch() is called.
 
 Public API
 ----------
 stretch(samples, ratio, sr)           -> np.ndarray
-    Stretch *samples* by *ratio* (>1 = longer, <1 = shorter).
+    Stretch by ratio (>1 = longer/slower, <1 = shorter/faster).
+    Pitch is preserved. Output length ~ int(len(samples) * ratio).
 
 stretch_to_length(samples, target_len, sr) -> np.ndarray
-    Stretch to exactly *target_len* samples.
+    Stretch to exactly target_len samples.
+    Trims or zero-pads by at most 1 sample to hit exact length.
+
+is_available() -> bool
+    True if pyrubberband + rubberband-cli are present and working.
 """
 
 from __future__ import annotations
 
 import logging
-import math
-
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 _RUBBERBAND_AVAILABLE = False
+_RUBBERBAND_ERROR: str = ""
+
 try:
-    import pyrubberband as pyrb
+    import pyrubberband as _pyrb
     _RUBBERBAND_AVAILABLE = True
-    logger.debug("pyrubberband available.")
-except Exception as e:
+except Exception as _e:
+    _RUBBERBAND_ERROR = str(_e)
     logger.warning(
-        "pyrubberband not available (%s). "
-        "Time-stretching will use scipy fallback (lower quality). "
-        "Install rubberband-cli and pyrubberband for full quality.", e
+        "pyrubberband not available: %s\n"
+        "Time-stretching will fail until you install:\n"
+        "  pip install pyrubberband\n"
+        "  (system) apt install rubberband-cli  OR  brew install rubberband",
+        _e,
     )
 
+# Length-ratio limits. After inversion to speed ratio:
+#   length 0.02 -> speed 50x (very compressed)
+#   length 50.0 -> speed 0.02x (very stretched)
+_RATIO_MIN = 0.02   # shortest output relative to input
+_RATIO_MAX = 50.0   # longest output relative to input
 
-# Clamp ratios to safe range for Rubber Band
-_RATIO_MIN = 0.02
-_RATIO_MAX = 50.0
+
+def is_available() -> bool:
+    """Return True if pyrubberband and rubberband-cli are usable."""
+    if not _RUBBERBAND_AVAILABLE:
+        return False
+    # Quick smoke-test with a tiny array
+    try:
+        probe = np.zeros(64, dtype=np.float32)
+        _pyrb.time_stretch(probe, 44100, 1.0)
+        return True
+    except Exception:
+        return False
 
 
 def stretch(samples: np.ndarray, ratio: float, sr: int = 44100) -> np.ndarray:
-    """Time-stretch *samples* by *ratio*.
-
-    ratio > 1.0  -> output is longer  (slower)
-    ratio < 1.0  -> output is shorter (faster)
-    ratio = 1.0  -> no change
+    """Time-stretch *samples* by *ratio* preserving pitch.
 
     Parameters
     ----------
     samples : float64 mono array
-    ratio   : stretch factor
+    ratio   : >1.0 = longer (slower), <1.0 = shorter (faster), 1.0 = no change
     sr      : sample rate
 
     Returns
     -------
     float64 mono array, length approximately int(len(samples) * ratio)
+
+    Raises
+    ------
+    RuntimeError if pyrubberband / rubberband-cli is not installed.
     """
+    if not _RUBBERBAND_AVAILABLE:
+        raise RuntimeError(
+            "Time-stretching requires pyrubberband and rubberband-cli.\n"
+            "Install with:\n"
+            "  pip install pyrubberband\n"
+            "  (system) apt install rubberband-cli  OR  brew install rubberband\n"
+            f"Import error was: {_RUBBERBAND_ERROR}"
+        )
+
     ratio = float(np.clip(ratio, _RATIO_MIN, _RATIO_MAX))
 
     if abs(ratio - 1.0) < 1e-6:
-        return samples.copy()
+        return samples.astype(np.float64)
 
-    if _RUBBERBAND_AVAILABLE:
-        return _stretch_rubberband(samples, ratio, sr)
-    else:
-        return _stretch_scipy(samples, ratio)
+    # pyrubberband.time_stretch() takes a *speed* ratio (like tape speed):
+    #   speed_ratio = 2.0 -> plays back faster -> output is shorter
+    #   speed_ratio = 0.5 -> plays back slower -> output is longer
+    # Our API uses a *length* ratio (>1 = longer), so we invert.
+    speed_ratio = 1.0 / ratio
+
+    # pyrubberband expects float32 mono as (N,)
+    audio_f32 = samples.astype(np.float32)
+    stretched  = _pyrb.time_stretch(audio_f32, sr, speed_ratio)
+    return stretched.astype(np.float64)
 
 
 def stretch_to_length(
@@ -75,60 +116,29 @@ def stretch_to_length(
     target_len: int,
     sr: int = 44100,
 ) -> np.ndarray:
-    """Stretch *samples* to exactly *target_len* samples.
+    """Stretch *samples* to exactly *target_len* samples, preserving pitch.
 
-    Uses time-stretch (not resampling) so pitch is preserved.
-    Output is trimmed or zero-padded to hit exactly *target_len*.
+    Computes the exact ratio needed, calls stretch(), then trims or
+    zero-pads by at most a few samples to guarantee the exact length.
+
+    Raises
+    ------
+    RuntimeError if pyrubberband / rubberband-cli is not installed.
     """
     src_len = len(samples)
     if src_len == 0 or target_len == 0:
-        return np.zeros(target_len, dtype=np.float64)
+        return np.zeros(max(target_len, 0), dtype=np.float64)
 
     if src_len == target_len:
-        return samples.copy()
+        return samples.astype(np.float64)
 
-    ratio = target_len / src_len
+    ratio    = target_len / src_len
     stretched = stretch(samples, ratio, sr)
 
-    # Trim or zero-pad to hit exact length
+    # Enforce exact length (Rubber Band output can be off by 1-2 samples)
     if len(stretched) >= target_len:
         return stretched[:target_len].astype(np.float64)
     else:
         out = np.zeros(target_len, dtype=np.float64)
-        out[: len(stretched)] = stretched
+        out[:len(stretched)] = stretched
         return out
-
-
-# ---------------------------------------------------------------------------
-# Internal backends
-# ---------------------------------------------------------------------------
-
-def _stretch_rubberband(samples: np.ndarray, ratio: float, sr: int) -> np.ndarray:
-    """High-quality stretch via Rubber Band Library."""
-    # pyrubberband expects float32 and (N,) or (N, ch)
-    audio_f32 = samples.astype(np.float32)
-    stretched  = pyrb.time_stretch(audio_f32, sr, ratio)
-    return stretched.astype(np.float64)
-
-
-def _stretch_scipy(samples: np.ndarray, ratio: float) -> np.ndarray:
-    """Low-quality fallback stretch via polyphase resampling.
-
-    This changes pitch too (it's a resample, not a true time-stretch).
-    Acceptable only as a development fallback.
-    """
-    from math import gcd
-    from scipy.signal import resample_poly
-
-    # Express ratio as a rational up/down pair
-    # Use 1000 as denominator for reasonable precision
-    denom = 1000
-    numer = max(1, int(round(ratio * denom)))
-    g = gcd(numer, denom)
-    up, down = numer // g, denom // g
-
-    logger.warning(
-        "Using scipy resample fallback (up=%d, down=%d) -- install rubberband-cli for quality.",
-        up, down,
-    )
-    return resample_poly(samples, up, down).astype(np.float64)

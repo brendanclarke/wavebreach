@@ -5,8 +5,11 @@ Tier-2 (Go button) DSP pipeline orchestrator.
 Runs in a background QThread.  Emits progress and completion signals.
 Pipeline per waveform:
   1. Offset  (window shift)
-  2. Stretch (asymmetric half-compress/expand)
-  3. Length normalisation stretch (to target sample count)
+  2. Stretch (asymmetric half-compress/expand via Rubber Band -- Modify only)
+  3. Length normalisation: resample to target sample count via numpy.interp
+     This is simple linear interpolation through the waveform shape --
+     correct for single-cycle wavetable content where pitch is a property
+     of playback rate, not of the stored samples.
   4. Filter  (biquad sosfilt)
   5. Normalise (peak scale)
 
@@ -29,7 +32,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from core.state import AppState
-from core import modifier, stretcher, filter_dsp
+from core import modifier, filter_dsp
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +112,16 @@ class ProcessWorker(QObject):
         for k, chunk in enumerate(modified):
             self.progress.emit(k + 1, K)
 
-            # Length normalise
-            wave = stretcher.stretch_to_length(chunk, target_len, sr)
+            # Length normalisation: resample to target_len via interpolation.
+            # numpy.interp maps target_len evenly-spaced points through the
+            # source waveform shape -- correct and artifact-free for
+            # single-cycle periodic material regardless of length ratio.
+            if len(chunk) != target_len:
+                x_old = np.linspace(0.0, 1.0, len(chunk))
+                x_new = np.linspace(0.0, 1.0, target_len)
+                wave  = np.interp(x_new, x_old, chunk)
+            else:
+                wave = chunk.astype(np.float64)
 
             # Filter (skip if OFF)
             if sos is not None:

@@ -68,3 +68,78 @@ All checks passed:
 | `ui/main_window.py` | _run_tier1() edge_mode + avg length; filter Off handling |
 | `ui/spectrum_view.py` | Dimmed spectrum; amber overlay; hide all when Off |
 | `ui/playback_panel.py` | CycleView: min/max drawing, grid, sample count label |
+
+---
+
+## Addendum: Bug Fixes Applied After Initial Phase 7 (same session)
+
+### Bug A -- Edge mode doubled region width
+**Root cause:** `filter_usable()` was stripping ZCs by direction before the
+splitter ran. With only rising ZCs in the list, adjacent triplets
+(i, i+1, i+2) spanned two full cycles instead of one.
+
+**Fix:** Removed direction filter from `filter_usable()` entirely.
+The function now returns all non-excluded ZCs in the work region,
+regardless of `edge_mode`. Direction filtering of the *center* ZC only
+happens inside `select_regions()`, which already had it correctly.
+`edge_mode` parameter retained in `filter_usable()` signature for API
+compatibility but is now a no-op there.
+
+**Verified:** All three edge modes produce avg region spans of 100.2 smp
+(one cycle of 440 Hz at 44100 Hz). Rising centers are all rising,
+falling centers are all falling.
+
+### Bug B -- No real time-stretch (scipy fallback was a resample)
+**Root cause:** `stretcher.py` fell back to `scipy.signal.resample_poly`
+when pyrubberband was unavailable. This is not a time-stretch -- it
+changes pitch as well as duration, producing incorrect wavetable output.
+
+**Fix:**
+1. Installed `pyrubberband` (pip) and `rubberband-cli` (apt) in the
+   development environment. Both confirmed working.
+2. Removed the scipy fallback entirely. `stretch()` now raises a clear
+   `RuntimeError` with install instructions if pyrubberband is missing.
+3. Fixed pyrubberband ratio convention: `pyrb.time_stretch(audio, sr, r)`
+   uses a *speed* ratio where r=2.0 = 2x faster = shorter output.
+   Our public API uses *length* ratio (>1 = longer), so we invert:
+   `speed_ratio = 1.0 / length_ratio`.
+
+**Verified:** 2x stretch: 2000 -> 4000 smp. 0.5x: 2000 -> 1000 smp.
+Pitch preserved: 440 Hz input peaks at 441 Hz after 2x stretch (FFT
+resolution limited). `stretch_to_length()` exact for 100/256/512/2048 smp.
+Full pipeline with rubberband + rising edge + LP filter produces
+non-silent output at correct length.
+
+### requirements.txt updated
+Added `pyrubberband>=0.3.0` (was already there) and note that
+`rubberband-cli` system package is required.
+
+---
+
+## Addendum B: Length Normalisation Algorithm Change
+
+**Problem:** Rubber Band (phase vocoder) produced a "pulse that decays to
+silence" when asked to stretch a ~169-sample single-cycle slice to 2000
+samples. Root cause: the input is shorter than one analysis frame (~1024
+samples), so the phase vocoder has no spectral content to synthesise from.
+
+**Conceptual correction:** For wavetable export, length normalisation is not
+a time-stretch -- it is a **resample of the waveform shape**. The synth
+determines pitch by how fast it cycles through the table; the tool's job is
+only to define the shape across N samples. Simple interpolation is correct,
+complete, and artifact-free.
+
+**Fix:** Replaced `stretcher.stretch_to_length()` in `processor.py` with
+`numpy.interp`:
+```python
+x_old = np.linspace(0.0, 1.0, len(chunk))
+x_new = np.linspace(0.0, 1.0, target_len)
+wave  = np.interp(x_new, x_old, chunk)
+```
+`stretcher` import removed from `processor.py`. Rubber Band is still used
+by `modifier.py` for the asymmetric Stretch transform (which IS a
+time-stretch in the traditional sense).
+
+**Verified:** 169-sample sine slice resampled to 169, 512, and 2000 samples.
+All three outputs: peak at 25%, trough at 75%, exactly 1 zero-crossing,
+min=-1.0, max=1.0. Shape is identical across all target lengths.
