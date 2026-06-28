@@ -101,9 +101,10 @@ class ProcessWorker(QObject):
         self.progress.emit(0, K)
         modified = modifier.apply_all(
             raw, regions,
-            s.offset_begin,   s.offset_end,
-            s.stretch_begin,  s.stretch_end,
-            s.suppress_begin, s.suppress_end,
+            s.offset_begin,     s.offset_end,
+            s.stretch_begin,    s.stretch_end,
+            s.suppress_begin,   s.suppress_end,
+            s.distribute_begin, s.distribute_end,
             sr,
         )
 

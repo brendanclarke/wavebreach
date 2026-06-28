@@ -209,6 +209,8 @@ class ParamPanel(QWidget):
         s.stretch_end    = self._stretch_end.value()
         s.suppress_begin = self._suppress_begin.value()
         s.suppress_end   = self._suppress_end.value()
+        s.distribute_begin = self._distribute_begin.value()
+        s.distribute_end   = self._distribute_end.value()
 
     # ------------------------------------------------------------------
     # Builder helpers
@@ -479,9 +481,17 @@ class ParamPanel(QWidget):
         grid.addWidget(self._suppress_begin, 3, 1)
         grid.addWidget(self._suppress_end,   3, 2)
 
+        # Distribute: -0.5 to +0.5, step 0.01
+        self._distribute_begin = self._make_dbl_spin(-0.5, 0.5, 0.0, 0.01, 2)
+        self._distribute_end   = self._make_dbl_spin(-0.5, 0.5, 0.0, 0.01, 2)
+        grid.addWidget(QLabel("Distribute"), 4, 0, Qt.AlignRight)
+        grid.addWidget(self._distribute_begin, 4, 1)
+        grid.addWidget(self._distribute_end,   4, 2)
+
         for w in (self._offset_begin, self._offset_end,
                   self._stretch_begin, self._stretch_end,
-                  self._suppress_begin, self._suppress_end):
+                  self._suppress_begin, self._suppress_end,
+                  self._distribute_begin, self._distribute_end):
             w.valueChanged.connect(self._emit_changed)
 
         self._layout.addWidget(grp)

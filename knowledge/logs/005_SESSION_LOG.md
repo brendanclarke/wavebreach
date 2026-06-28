@@ -143,3 +143,28 @@ time-stretch in the traditional sense).
 **Verified:** 169-sample sine slice resampled to 169, 512, and 2000 samples.
 All three outputs: peak at 25%, trough at 75%, exactly 1 zero-crossing,
 min=-1.0, max=1.0. Shape is identical across all target lengths.
+
+---
+
+## Addendum C: Distribute modifier added
+
+New fourth Modify option: **Distribute** (Begin/End, -0.5 to +0.5).
+
+After Offset, Stretch, and Suppress have run, the calculated position of
+the central ZC within the chunk is used to split it into two halves.
+Each half is resampled via np.interp to a new sample count; the two halves
+are concatenated to give the same total length as the input.
+
+- +0.5: first half grows by 50% of its length, second half shrinks to compensate
+- -0.5: first half shrinks by 50% of its length, second half grows to compensate
+- 0.0: no change
+
+The center position used is the *calculated* position tracked through Offset
+and Stretch transforms -- not a new zero-crossing detection. This matches
+the user's specification exactly.
+
+Files changed: core/modifier.py, core/state.py, core/processor.py,
+ui/param_panel.py.
+
+Verified: +0.5 moves first-half peak to 75% of frame, -0.5 to 25%.
+Output length exact (200 smp) for all distribute values.

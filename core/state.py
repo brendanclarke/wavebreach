@@ -61,6 +61,8 @@ class AppState:
     stretch_end: float = 0.0
     suppress_begin: float = 0.0   # -1.0 to +1.0
     suppress_end: float = 0.0
+    distribute_begin: float = 0.0  # -0.5 to +0.5
+    distribute_end: float = 0.0
 
     # ------------------------------------------------------------------ #
     #  Derived / computed (populated after Go or live ZC pass)            #
