@@ -282,10 +282,10 @@ Order of operations per waveform, applied after slicing:
 - `ui/spectrum_view.py`: filter response drawn as filled blue overlay + curve
 - Response updated live on every filter param change via MainWindow._sync_filter_display()
 
-### Phase 5 — Processed playback, navigation, export [TODO]
-- `core/exporter.py`: ZIP assembly, numbered WAV naming
-- `ui/playback_panel.py`: fully wire Prev/Next, Play All, Loop, Speed
-- `ui/main_window.py`: wire export dialog and exporter
+### Phase 5 — Processed playback, navigation, export [DONE]
+- `core/exporter.py`: ZIP assembly, numbered WAV naming, sanitise_name
+- `core/playback.py`: play_loop() added for gapless looping via OutputStream callback
+- `ui/main_window.py`: export dialog wired, loop playback wired
 - Playback of processed waves (no filter re-applied)
 
 ### Phase 6 — Polish and validation [TODO]

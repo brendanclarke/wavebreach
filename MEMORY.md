@@ -133,7 +133,7 @@ The Offset shifts the *window* around the fixed central ZC:
 | 2b | Interactive controls: zoom/pos sliders, draggable markers, spectrum drag | COMPLETE |
 | 3 | Full DSP pipeline (Modify, stretch, filter, normalize), Go button | COMPLETE |
 | 4 | Spectrum filter overlay | COMPLETE |
-| 5 | Processed playback, Prev/Next, export ZIP | TODO |
+| 5 | Processed playback, Prev/Next, export ZIP | COMPLETE |
 | 6 | Polish, validation, edge cases | TODO |
 | 7 | User feedback round 1: filter contrast, Off mode, edge direction, avg length, CycleView fix | COMPLETE |
 | 7 | User testing feedback round 1 (5 issues: filter overlay legibility, filter Off mode, length/pitch average display, edge-direction ZC filtering, CycleView scaling) | PLANNED (not yet implemented) |

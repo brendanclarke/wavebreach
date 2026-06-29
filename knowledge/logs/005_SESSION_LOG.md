@@ -168,3 +168,30 @@ ui/param_panel.py.
 
 Verified: +0.5 moves first-half peak to 75% of frame, -0.5 to 25%.
 Output length exact (200 smp) for all distribute values.
+
+---
+
+## Addendum D: Phase 5 — Export, Loop Playback, Distribute
+
+### Export (core/exporter.py -- new)
+- `sanitise_name(name)`: strips illegal filename chars, trims whitespace
+- `export_zip(waves, name, path, sr)`: writes numbered ZIPped WAVs
+  - float64 -> int16 -> BytesIO WAV via soundfile -> zipfile.ZipFile
+  - zero-pads index to min 4 digits (more if > 9999 waves)
+  - returns wave count written
+
+### Export wired in main_window.py
+- `_on_export()`: validates processed_waves, opens QFileDialog.getSaveFileName,
+  calls export_zip, updates status bar. Shows QMessageBox on error.
+- Default save path: same directory as the source file, name from wavetable
+  name field.
+
+### Loop playback (core/playback.py)
+- `play_loop(samples, sr)`: opens a sounddevice OutputStream with a callback
+  that wraps position and copies chunks from the buffer indefinitely.
+  `stop()` closes the stream cleanly.
+- `play_array()` restored (was accidentally dropped during refactor).
+- `stop()` now checks for open OutputStream and closes it before calling
+  sd.stop().
+
+### Distribute already logged in Addendum C above.

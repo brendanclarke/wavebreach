@@ -32,6 +32,7 @@ from core.zero_crossing import detect, compute_exclusions, filter_usable
 from core.splitter import select_regions
 from core.filter_dsp import design_filter, apply_filter, compute_response
 from core.processor import ProcessWorker
+from core.exporter import export_zip, sanitise_name
 from ui.waveform_view import WaveformView
 from ui.spectrum_view import SpectrumView
 from ui.param_panel import ParamPanel
@@ -414,9 +415,12 @@ class MainWindow(QMainWindow):
         waves = self._state.processed_waves
         if not waves:
             return
-        combined    = np.concatenate(waves)
+        combined     = np.concatenate(waves)
         effective_sr = max(1000, min(int(self._state.sample_rate * speed), 192000))
-        self._playback.play_array(combined, effective_sr)
+        if loop:
+            self._playback.play_loop(combined, effective_sr)
+        else:
+            self._playback.play_array(combined, effective_sr)
         self._playback_panel.set_playing(True)
 
     def _on_stop(self) -> None:
@@ -448,7 +452,40 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_export(self) -> None:
-        self.statusBar().showMessage("Export not yet implemented (Phase 5).")
+        waves = self._state.processed_waves
+        if not waves:
+            QMessageBox.warning(
+                self, "Nothing to Export",
+                "No processed waveforms found.\nPress GO first to process the file."
+            )
+            return
+
+        name    = sanitise_name(self._playback_panel.wavetable_name)
+        default = str(Path(self._state.source_path).parent / f"{name}.zip") \
+                  if self._state.source_path else f"{name}.zip"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Wavetable ZIP", default,
+            "ZIP Archive (*.zip);;All Files (*)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".zip"):
+            path += ".zip"
+
+        try:
+            n = export_zip(
+                waves,
+                wavetable_name=name,
+                output_path=path,
+                sr=self._state.sample_rate,
+            )
+            self.statusBar().showMessage(
+                f"Exported {n} waveforms to {Path(path).name}"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", str(exc))
+            self.statusBar().showMessage("Export failed.")
 
     # ------------------------------------------------------------------
     # Misc

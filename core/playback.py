@@ -39,8 +39,9 @@ class PlaybackController:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock   = threading.Lock()
         self._playing = False
+        self._stream  = None   # holds OutputStream when looping
 
     # ------------------------------------------------------------------
     # Public API
@@ -50,43 +51,18 @@ class PlaybackController:
     def available(self) -> bool:
         return _SD_AVAILABLE
 
-    def play_array(self, samples: np.ndarray, sr: int = 44100) -> None:
-        """Play *samples* (float64 mono or stereo) at sample rate *sr*.
-
-        Stops any currently playing audio first.
-        Does nothing if sounddevice is unavailable.
-        """
-        if not _SD_AVAILABLE:
-            logger.warning("play_array called but sounddevice is not available.")
-            return
-
-        self.stop()
-
-        # Ensure float32 for sounddevice (it accepts float64 too but float32
-        # is the safer cross-platform choice)
-        audio = samples.astype(np.float32)
-
-        with self._lock:
-            self._playing = True
-
-        def _finished_callback():
-            with self._lock:
-                self._playing = False
-
-        try:
-            sd.play(audio, samplerate=sr)
-            # Register a thread that waits for completion and clears the flag
-            t = threading.Thread(target=self._wait_done, daemon=True)
-            t.start()
-        except Exception as exc:
-            logger.error("sounddevice play error: %s", exc)
-            with self._lock:
-                self._playing = False
-
     def stop(self) -> None:
-        """Stop any currently playing audio."""
+        """Stop any currently playing audio (one-shot or loop)."""
         if not _SD_AVAILABLE:
             return
+        # Close loop stream if open
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception as exc:
+                logger.debug("stream close error: %s", exc)
+            self._stream = None
         try:
             sd.stop()
         except Exception as exc:
@@ -97,13 +73,91 @@ class PlaybackController:
     def is_playing(self) -> bool:
         with self._lock:
             return self._playing
+        """Play *samples* once. Stops any currently playing audio first."""
+        if not _SD_AVAILABLE:
+            logger.warning("play_array called but sounddevice is not available.")
+            return
+
+        self.stop()
+        audio = samples.astype(np.float32)
+
+        with self._lock:
+            self._playing = True
+
+        try:
+            sd.play(audio, samplerate=sr)
+            t = threading.Thread(target=self._wait_done, daemon=True)
+            t.start()
+        except Exception as exc:
+            logger.error("sounddevice play error: %s", exc)
+            with self._lock:
+                self._playing = False
+
+    def play_array(self, samples: np.ndarray, sr: int = 44100) -> None:
+        """Play *samples* once at *sr*. Stops any current audio first."""
+        if not _SD_AVAILABLE:
+            logger.warning("play_array called but sounddevice is not available.")
+            return
+        self.stop()
+        audio = samples.astype(np.float32)
+        with self._lock:
+            self._playing = True
+        try:
+            sd.play(audio, samplerate=sr)
+            t = threading.Thread(target=self._wait_done, daemon=True)
+            t.start()
+        except Exception as exc:
+            logger.error("sounddevice play error: %s", exc)
+            with self._lock:
+                self._playing = False
+
+    def play_loop(self, samples: np.ndarray, sr: int = 44100) -> None:
+        """Play *samples* in a continuous loop until stop() is called."""
+        if not _SD_AVAILABLE:
+            logger.warning("play_loop called but sounddevice is not available.")
+            return
+
+        self.stop()
+        audio = samples.astype(np.float32)
+        pos   = [0]   # mutable closure for callback position
+
+        def _callback(outdata, frames, time_info, status):
+            n = len(audio)
+            chunk = np.empty(frames, dtype=np.float32)
+            written = 0
+            while written < frames:
+                remaining_in_buf = n - pos[0]
+                needed = frames - written
+                take = min(remaining_in_buf, needed)
+                chunk[written:written + take] = audio[pos[0]:pos[0] + take]
+                written += take
+                pos[0]  += take
+                if pos[0] >= n:
+                    pos[0] = 0   # wrap
+            outdata[:, 0] = chunk
+
+        with self._lock:
+            self._playing = True
+
+        try:
+            self._stream = sd.OutputStream(
+                samplerate=sr,
+                channels=1,
+                dtype=np.float32,
+                callback=_callback,
+            )
+            self._stream.start()
+        except Exception as exc:
+            logger.error("sounddevice loop error: %s", exc)
+            with self._lock:
+                self._playing = False
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
     def _wait_done(self) -> None:
-        """Block until sounddevice finishes, then clear the playing flag."""
+        """Block until sounddevice one-shot finishes, then clear flag."""
         if not _SD_AVAILABLE:
             return
         try:
